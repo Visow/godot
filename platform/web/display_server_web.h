@@ -81,6 +81,7 @@ private:
 	Array voices;
 
 	char canvas_id[256] = { 0 };
+	bool wx_glx_enabled = false;
 	bool cursor_inside_canvas = true;
 	DisplayServerEnums::CursorShape cursor_shape = DisplayServerEnums::CURSOR_ARROW;
 	Point2i last_click_pos = Point2(-100, -100); // TODO check this again.
