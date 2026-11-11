@@ -330,6 +330,7 @@ Variant JavaScriptBridge::_create_object_bind(const Variant **p_args, int p_argc
 	return JavaScriptObjectImpl::_js2variant(type, &exchange);
 }
 
+#ifdef JAVASCRIPT_EVAL_ENABLED
 extern "C" {
 union js_eval_ret {
 	uint32_t b;
@@ -339,6 +340,7 @@ union js_eval_ret {
 
 extern int godot_js_eval(const char *p_js, int p_use_global_ctx, union js_eval_ret *p_union_ptr, void *p_byte_arr, void *p_byte_arr_write, void *(*p_callback)(void *p_ptr, void *p_ptr2, int p_len));
 }
+#endif
 
 void *resize_PackedByteArray_and_open_write(void *p_arr, void *r_write, int p_len) {
 	PackedByteArray *arr = (PackedByteArray *)p_arr;
@@ -349,6 +351,12 @@ void *resize_PackedByteArray_and_open_write(void *p_arr, void *r_write, int p_le
 }
 
 Variant JavaScriptBridge::eval(const String &p_code, bool p_use_global_exec_context) {
+#ifndef JAVASCRIPT_EVAL_ENABLED
+	// WeChat Mini Game rejects eval, and the JS library is not linked by default.
+	(void)p_code;
+	(void)p_use_global_exec_context;
+	return Variant();
+#else
 	union js_eval_ret js_data;
 	PackedByteArray arr;
 	VectorWriteProxy<uint8_t> arr_write;
@@ -371,6 +379,7 @@ Variant JavaScriptBridge::eval(const String &p_code, bool p_use_global_exec_cont
 		default:
 			return Variant();
 	}
+#endif
 }
 
 bool JavaScriptBridge::is_js_buffer(Ref<JavaScriptObject> p_js_obj) {

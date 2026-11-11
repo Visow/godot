@@ -51,7 +51,7 @@ def get_opts():
         BoolVariable("use_lsan", "Use Emscripten leak sanitizer (LSAN)", False),
         BoolVariable("use_safe_heap", "Use Emscripten SAFE_HEAP sanitizer", False),
         # eval() can be a security concern, so it can be disabled.
-        BoolVariable("javascript_eval", "Enable JavaScript eval interface", True),
+        BoolVariable("javascript_eval", "Enable JavaScript eval interface", False),
         BoolVariable(
             "dlink_enabled", "Enable WebAssembly dynamic linking (GDExtension support). Produces bigger binaries", False
         ),
@@ -61,7 +61,13 @@ def get_opts():
             "Use Emscripten PROXY_TO_PTHREAD option to run the main application code to a separate thread",
             False,
         ),
-        BoolVariable("wasm_simd", "Use WebAssembly SIMD to improve CPU performance", True),
+        BoolVariable(
+            "wasm_simd",
+            "Use WebAssembly SIMD to improve CPU performance (may break older iOS WebKit in WeChat Mini Game)",
+            False,
+        ),
+        BoolVariable("use_wx_glx", "Build with WeChat EmscriptenGLX. Requires wx_glx_lib and is not part of the standard WebGL template.", False),
+        ("wx_glx_lib", "Absolute path to libemscriptenglx_<emscripten-version>.a", ""),
     ]
 
 
@@ -245,8 +251,17 @@ def configure(env: "SConsEnvironment"):
         env.AppendUnique(CPPDEFINES=["GLES3_ENABLED"])
         # This setting just makes WebGL 2 APIs available, it does NOT disable WebGL 1.
         env.Append(LINKFLAGS=["-sMAX_WEBGL_VERSION=2"])
-        # Allow use to take control of swapping WebGL buffers.
-        env.Append(LINKFLAGS=["-sOFFSCREEN_FRAMEBUFFER=1"])
+        # GLX builds omit the offscreen framebuffer. Explicit swaps then fail context creation.
+        if env["use_wx_glx"]:
+            wx_glx_lib = env["wx_glx_lib"]
+            if not wx_glx_lib or not os.path.isfile(wx_glx_lib):
+                print_error("use_wx_glx=yes requires wx_glx_lib to point at the matching libemscriptenglx static library.")
+                sys.exit(255)
+            env.Append(CPPDEFINES=["WECHAT_GLX_EXPERIMENTAL"])
+            env.Append(LINKFLAGS=[wx_glx_lib])
+        else:
+            # Allow use to take control of swapping WebGL buffers.
+            env.Append(LINKFLAGS=["-sOFFSCREEN_FRAMEBUFFER=1"])
         # Disables the use of *glGetProcAddress() which is inefficient.
         # See https://emscripten.org/docs/tools_reference/settings_reference.html#gl-enable-get-proc-address
         env.Append(LINKFLAGS=["-sGL_ENABLE_GET_PROC_ADDRESS=0"])
@@ -297,9 +312,10 @@ def configure(env: "SConsEnvironment"):
     # Reduce code size by generating less support code (e.g. skip NodeJS support).
     env.Append(LINKFLAGS=["-sENVIRONMENT=web,worker"])
 
-    # Force long jump mode to 'wasm'
-    env.Append(CCFLAGS=["-sSUPPORT_LONGJMP='wasm'"])
-    env.Append(LINKFLAGS=["-sSUPPORT_LONGJMP='wasm'"])
+    # WeChat's WebAssembly runtime does not support the exception-handling
+    # proposal required by Wasm SjLj. Keep setjmp/longjmp in JavaScript.
+    env.Append(CCFLAGS=["-sSUPPORT_LONGJMP='emscripten'"])
+    env.Append(LINKFLAGS=["-sSUPPORT_LONGJMP='emscripten'"])
 
     # Allow increasing memory buffer size during runtime. This is efficient
     # when using WebAssembly (in comparison to asm.js) and works well for
