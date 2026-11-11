@@ -7,11 +7,8 @@ const Features = {
 	 * @function Engine.isWebGLAvailable
 	 */
 	isWebGLAvailable: function (majorVersion = 1) {
-		try {
-			const canvas = /** @type {!HTMLCanvasElement} */ (document.createElement('canvas'));
-			return !!canvas.getContext(['webgl', 'webgl2'][majorVersion - 1]);
-		} catch (e) { /* Not available */ }
-		return false;
+		// WeChat Mini Game WebGL detection returns false positives and false negatives.
+		return true;
 	},
 
 	/**

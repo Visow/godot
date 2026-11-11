@@ -213,7 +213,11 @@ const InternalConfig = function (initConfig) { // eslint-disable-line no-unused-
 		 * @export
 		 * @type {?function(number)}
 		 */
-		onExit: null,
+		onExit: function () {
+			if (typeof wx !== 'undefined' && typeof wx.exitMiniProgram === 'function') {
+				wx.exitMiniProgram();
+			}
+		},
 		/**
 		 * A callback function for displaying download progress.
 		 *
@@ -317,12 +321,27 @@ const InternalConfig = function (initConfig) { // eslint-disable-line no-unused-
 			'emscriptenPoolSize': this.emscriptenPoolSize,
 			'instantiateWasm': function (imports, onSuccess) {
 				function done(result) {
-					onSuccess(result['instance'], result['module']);
+					const instance = result && result['instance'] ? result['instance'] : result;
+					onSuccess(instance, result ? result['module'] : undefined);
 				}
-				if (typeof (WebAssembly.instantiateStreaming) !== 'undefined') {
-					WebAssembly.instantiateStreaming(Promise.resolve(r), imports).then(done);
+				const wxWasm = (typeof GameGlobal !== 'undefined' && GameGlobal.WXWebAssembly)
+					|| (typeof WXWebAssembly !== 'undefined' ? WXWebAssembly : null);
+				if (wxWasm && typeof wxWasm.instantiate === 'function') {
+					// WeChat rejects ArrayBuffer here: the path must end in .wasm or .wasm.br.
+					const wasmPath = `${loadPath}.wasm.br`;
+					wxWasm.instantiate(wasmPath, imports).then(done).catch(function (err) {
+						console.error(err);
+					});
+					r = null;
+					return {};
+				}
+				const bytes = r && r.data !== undefined ? r.data : r;
+				if (bytes instanceof ArrayBuffer || ArrayBuffer.isView(bytes)) {
+					WebAssembly.instantiate(bytes, imports).then(done);
+				} else if (typeof (WebAssembly.instantiateStreaming) !== 'undefined') {
+					WebAssembly.instantiateStreaming(Promise.resolve(bytes), imports).then(done);
 				} else {
-					r.arrayBuffer().then(function (buffer) {
+					bytes.arrayBuffer().then(function (buffer) {
 						WebAssembly.instantiate(buffer, imports).then(done);
 					});
 				}
@@ -343,7 +362,7 @@ const InternalConfig = function (initConfig) { // eslint-disable-line no-unused-
 				} else if (path.endsWith('.side.wasm')) {
 					return `${loadPath}.side.wasm`;
 				} else if (path.endsWith('.wasm')) {
-					return `${loadPath}.wasm`;
+					return `${loadPath}.wasm.br`;
 				}
 				return path;
 			},

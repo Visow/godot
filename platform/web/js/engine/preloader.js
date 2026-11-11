@@ -32,6 +32,14 @@ const Preloader = /** @constructor */ function () { // eslint-disable-line no-un
 			loaded: 0,
 			done: false,
 		};
+		const fsUtils = (typeof globalThis !== 'undefined' && globalThis.fsUtils) || (typeof window !== 'undefined' && window.fsUtils);
+		if (fsUtils && typeof fsUtils.localFetch === 'function') {
+			return fsUtils.localFetch(file).then(function (response) {
+				tracker[file].loaded = tracker[file].total;
+				tracker[file].done = true;
+				return response;
+			});
+		}
 		return fetch(file).then(function (response) {
 			if (!response.ok) {
 				return Promise.reject(new Error(`Failed loading file '${file}'`));

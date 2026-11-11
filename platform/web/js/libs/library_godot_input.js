@@ -38,133 +38,154 @@ const GodotIME = {
 	$GodotIME: {
 		ime: null,
 		active: false,
-		focusTimerIntervalId: -1,
 
 		getModifiers: function (evt) {
 			return (evt.shiftKey + 0) + ((evt.altKey + 0) << 1) + ((evt.ctrlKey + 0) << 2) + ((evt.metaKey + 0) << 3);
 		},
 
 		ime_active: function (active) {
-			function clearFocusTimerInterval() {
-				clearInterval(GodotIME.focusTimerIntervalId);
-				GodotIME.focusTimerIntervalId = -1;
-			}
-
-			function focusTimer() {
-				if (GodotIME.ime == null) {
-					clearFocusTimerInterval();
-					return;
+			if (GodotIME.ime) {
+				if (active) {
+					GodotIME.ime.show()
+				} else {
+					GodotIME.ime.hide()
 				}
-				GodotIME.ime.focus();
-			}
-
-			if (GodotIME.focusTimerIntervalId > -1) {
-				clearFocusTimerInterval();
-			}
-
-			if (GodotIME.ime == null) {
-				return;
-			}
-
-			GodotIME.active = active;
-			if (active) {
-				GodotIME.ime.style.display = 'block';
-				GodotIME.focusTimerIntervalId = setInterval(focusTimer, 100);
-			} else {
-				GodotIME.ime.style.display = 'none';
-				GodotConfig.canvas.focus();
 			}
 		},
 
 		ime_position: function (x, y) {
-			if (GodotIME.ime == null) {
-				return;
-			}
-			const canvas = GodotConfig.canvas;
-			const rect = canvas.getBoundingClientRect();
-			const rw = canvas.width / rect.width;
-			const rh = canvas.height / rect.height;
-			const clx = (x / rw) + rect.x;
-			const cly = (y / rh) + rect.y;
-
-			GodotIME.ime.style.left = `${clx}px`;
-			GodotIME.ime.style.top = `${cly}px`;
 		},
 
 		init: function (ime_cb, key_cb, code, key) {
-			function key_event_cb(pressed, evt) {
-				const modifiers = GodotIME.getModifiers(evt);
-				GodotRuntime.stringToHeap(evt.code, code, 32);
-				GodotRuntime.stringToHeap(evt.key, key, 32);
-				key_cb(pressed, evt.repeat, modifiers);
-				evt.preventDefault();
-			}
-			function ime_event_cb(event) {
-				if (GodotIME.ime == null) {
-					return;
-				}
-				switch (event.type) {
-				case 'compositionstart':
-					ime_cb(0, null);
-					GodotIME.ime.innerHTML = '';
-					break;
-				case 'compositionupdate': {
-					const ptr = GodotRuntime.allocString(event.data);
-					ime_cb(1, ptr);
-					GodotRuntime.free(ptr);
-				} break;
-				case 'compositionend': {
-					const ptr = GodotRuntime.allocString(event.data);
-					ime_cb(2, ptr);
-					GodotRuntime.free(ptr);
-					GodotIME.ime.innerHTML = '';
-				} break;
-				default:
-					// Do nothing.
+			function ime_event_cb(type, event) {
+				if (GodotIME.ime) {
+					const ptr = GodotRuntime.allocString(event.value);
+					ime_cb(type, ptr);
+					GodotRuntime.free(ptr)
 				}
 			}
-
-			const ime = document.createElement('div');
-			ime.className = 'ime';
-			ime.style.background = 'none';
-			ime.style.opacity = 0.0;
-			ime.style.position = 'fixed';
-			ime.style.textAlign = 'left';
-			ime.style.fontSize = '1px';
-			ime.style.left = '0px';
-			ime.style.top = '0px';
-			ime.style.width = '100%';
-			ime.style.height = '40px';
-			ime.style.pointerEvents = 'none';
-			ime.style.display = 'none';
-			ime.contentEditable = 'true';
-
-			GodotEventListeners.add(ime, 'compositionstart', ime_event_cb, false);
-			GodotEventListeners.add(ime, 'compositionupdate', ime_event_cb, false);
-			GodotEventListeners.add(ime, 'compositionend', ime_event_cb, false);
-			GodotEventListeners.add(ime, 'keydown', key_event_cb.bind(null, 1), false);
-			GodotEventListeners.add(ime, 'keyup', key_event_cb.bind(null, 0), false);
-
-			ime.onblur = function () {
-				this.style.display = 'none';
-				GodotConfig.canvas.focus();
-				GodotIME.active = false;
+			let lastValue = ""
+			let lastValueLength = 0
+			let sessionInitialValue = ""
+			let sessionInitialLength = 0
+			let currentLength = 0
+			let imeEnded = false
+			let sendKey = (codeStr, keyStr, modifiers = 0) => {
+				GodotRuntime.stringToHeap(codeStr, code, 32)
+				GodotRuntime.stringToHeap(keyStr, key, 32)
+				key_cb(1, 0, modifiers)
+				key_cb(0, 0, modifiers)
+			}
+			let clearExistingText = (length) => {
+				if (length <= 0) {
+					return
+				}
+				// Try select-all then backspace to replace, and also fallback to backspace N times.
+				sendKey("KeyA", "a", 4)
+				sendKey("Backspace", "Backspace", 0)
+				for (let i = 0; i < length; i++) {
+					sendKey("Backspace", "Backspace", 0)
+				}
+			}
+			let insertText = (text) => {
+				for (const ch of text) {
+					sendKey("Unidentified", ch, 0)
+				}
+			}
+			let inputCb = evt => {
+				if (!evt || typeof evt.value !== "string") {
+					return
+				}
+				const value = evt.value
+				if (value === lastValue) {
+					return
+				}
+				if (!imeEnded) {
+					// End IME so key events are not ignored.
+					ime_event_cb(2, { value: "" })
+					imeEnded = true
+				}
+				clearExistingText(currentLength)
+				insertText(value)
+				lastValue = value
+				lastValueLength = value.length
+				currentLength = lastValueLength
+				GodotIME.initialText = lastValue
+			}
+			let inputConfirm = evt => {
+				const value = (evt && typeof evt.value === "string") ? evt.value : lastValue
+				ime_event_cb(2, { value: "" })
+				clearExistingText(currentLength)
+				insertText(value)
+				GodotIME.initialText = value
+				lastValue = value
+				lastValueLength = value.length
+				currentLength = lastValueLength
+				ime.hide();
+			}
+			let inputComplete = evt => {
+				if (!GodotIME.active) {
+					ime.hide();
+					return
+				}
+				const value = (evt && typeof evt.value === "string") ? evt.value : lastValue
+				ime_event_cb(2, { value: "" })
+				clearExistingText(currentLength)
+				insertText(value)
+				GodotIME.initialText = value
+				lastValue = value
+				lastValueLength = value.length
+				currentLength = lastValueLength
+				ime.hide();
+			}
+			let ime = {
+				activeTime: 0,
+				show() {
+					let delta = Date.now() - ime.activeTime
+					if (delta < 100) {
+						return
+					}
+					if (GodotIME.active) return;
+					GodotIME.active = true;
+					if (typeof GodotIME.initialText === "string") {
+						lastValue = GodotIME.initialText
+					}
+					lastValueLength = lastValue.length
+					sessionInitialValue = lastValue
+					sessionInitialLength = lastValueLength
+					currentLength = sessionInitialLength
+					imeEnded = false
+					wx.showKeyboard({
+						defaultValue: lastValue,
+						maxLength: 99,
+						multiple: false,
+						confirmHold: true,
+						confirmType: "done"
+					});
+					ime_event_cb(0, { value: "" });
+					wx.onKeyboardInput(inputCb);
+					wx.onKeyboardConfirm(inputConfirm);
+					__globalAdapter.onKeyboardComplete(inputComplete);
+				},
+				hide() {
+					if (!GodotIME.active)
+						return;
+					__globalAdapter.hideKeyboard();
+					ime.activeTime = Date.now()
+					GodotIME.active = false;
+					__globalAdapter.offKeyboardInput(inputCb);
+					__globalAdapter.offKeyboardConfirm(inputConfirm);
+					__globalAdapter.offKeyboardComplete(inputComplete)
+				}
 			};
-
-			GodotConfig.canvas.parentElement.appendChild(ime);
-			GodotIME.ime = ime;
+			GodotIME.ime = ime
 		},
 
 		clear: function () {
-			if (GodotIME.ime == null) {
-				return;
+			if (GodotIME.ime) {
+				GodotIME.ime.remove();
+				GodotIME.ime = null;
 			}
-			if (GodotIME.focusTimerIntervalId > -1) {
-				clearInterval(GodotIME.focusTimerIntervalId);
-				GodotIME.focusTimerIntervalId = -1;
-			}
-			GodotIME.ime.remove();
-			GodotIME.ime = null;
 		},
 	},
 };
@@ -180,13 +201,6 @@ const GodotInputGamepads = {
 
 		get_pads: function () {
 			try {
-				// Will throw in iframe when permission is denied.
-				// Will throw/warn in the future for insecure contexts.
-				// See https://github.com/w3c/gamepad/pull/120
-				const pads = navigator.getGamepads();
-				if (pads) {
-					return pads;
-				}
 				return [];
 			} catch (e) {
 				return [];
@@ -314,84 +328,75 @@ mergeInto(LibraryManager.library, GodotInputGamepads);
 const GodotInputDragDrop = {
 	$GodotInputDragDrop__deps: ['$FS', '$GodotFS'],
 	$GodotInputDragDrop: {
-		MAX_DROP_SIZE: 200 * 1024 * 1024,
-		create_drop: function () {
-			const drop = {};
-			drop.pending = [];
-			drop.dirs = [];
-			drop.files = [];
-			drop.size = 0;
-			drop.add_entry = function (entry, path) {
-				if (entry.isDirectory) {
-					drop.add_dir(entry, path);
-				} else if (entry.isFile) {
-					drop.add_file(entry, path);
-				} else {
-					GodotRuntime.error('Unrecognized entry...', entry);
-				}
-			};
-			drop.add_dir = function (entry, path) {
-				const next = `${path}/${entry.name}`;
-				drop.pending.push(() => new Promise(function (resolve, reject) {
-					const reader = entry.createReader();
-					reader.readEntries(function (entries) {
-						drop.dirs.push(next);
-						for (let i = 0; i < entries.length; i++) {
-							drop.add_entry(entries[i], next);
-						}
-						resolve();
-					});
-				}));
-			};
-			drop.add_file = function (entry, path) {
-				drop.pending.push(() => new Promise(function (resolve, reject) {
-					entry.file(function (file) {
-						drop.size += file.size ?? 0;
-						if (drop.size > GodotInputDragDrop.MAX_DROP_SIZE) {
-							reject(new Error('Drop size limit reached.'));
-							return;
-						}
-						const reader = new FileReader();
-						reader.onload = function () {
-							const f = {
-								'path': `${path}/${file.name}`,
-								'name': file.name,
-								'type': file.type,
-								'size': file.size,
-								'data': reader.result,
-							};
-							drop.files.push(f);
-							resolve();
-						};
-						reader.onerror = function (err) {
-							reject(err);
-						};
-						reader.readAsArrayBuffer(file);
-					}, function (err) {
-						reject(err);
-					});
-				}));
-			};
-			return drop;
+		promises: [],
+		pending_files: [],
+
+		add_entry: function (entry) {
+			if (entry.isDirectory) {
+				GodotInputDragDrop.add_dir(entry);
+			} else if (entry.isFile) {
+				GodotInputDragDrop.add_file(entry);
+			} else {
+				GodotRuntime.error('Unrecognized entry...', entry);
+			}
 		},
 
-		process: function (drop) {
-			if (drop.pending.length === 0) {
-				return Promise.resolve();
+		add_dir: function (entry) {
+			GodotInputDragDrop.promises.push(new Promise(function (resolve, reject) {
+				const reader = entry.createReader();
+				reader.readEntries(function (entries) {
+					for (let i = 0; i < entries.length; i++) {
+						GodotInputDragDrop.add_entry(entries[i]);
+					}
+					resolve();
+				});
+			}));
+		},
+
+		add_file: function (entry) {
+			GodotInputDragDrop.promises.push(new Promise(function (resolve, reject) {
+				entry.file(function (file) {
+					const reader = new FileReader();
+					reader.onload = function () {
+						const f = {
+							'path': file.relativePath || file.webkitRelativePath,
+							'name': file.name,
+							'type': file.type,
+							'size': file.size,
+							'data': reader.result,
+						};
+						if (!f['path']) {
+							f['path'] = f['name'];
+						}
+						GodotInputDragDrop.pending_files.push(f);
+						resolve();
+					};
+					reader.onerror = function () {
+						GodotRuntime.print('Error reading file');
+						reject();
+					};
+					reader.readAsArrayBuffer(file);
+				}, function (err) {
+					GodotRuntime.print('Error!');
+					reject();
+				});
+			}));
+		},
+
+		process: function (resolve, reject) {
+			if (GodotInputDragDrop.promises.length === 0) {
+				resolve();
+				return;
 			}
-			// Execute pending operations.
-			return drop.pending.splice(0).reduce(function (a, b) {
-				return a.then(b);
-			}, Promise.resolve()).then(function (result) {
-				// Will check if new operations have been queued or resolve.
-				return GodotInputDragDrop.process(drop);
+			GodotInputDragDrop.promises.pop().then(function () {
+				setTimeout(function () {
+					GodotInputDragDrop.process(resolve, reject);
+				}, 0);
 			});
 		},
 
 		_process_event: function (ev, callback) {
 			ev.preventDefault();
-			const ROOT = `/tmp/drop-${parseInt(Math.random() * (1 << 30), 10)}`;
-			const drop = GodotInputDragDrop.create_drop();
 			if (ev.dataTransfer.items) {
 				// Use DataTransferItemList interface to access the file(s)
 				for (let i = 0; i < ev.dataTransfer.items.length; i++) {
@@ -403,34 +408,76 @@ const GodotInputDragDrop = {
 						entry = item.webkitGetAsEntry();
 					}
 					if (entry) {
-						drop.add_entry(entry, ROOT);
+						GodotInputDragDrop.add_entry(entry);
 					}
 				}
 			} else {
 				GodotRuntime.error('File upload not supported');
 			}
-			GodotInputDragDrop.process(drop).then(function () {
-				const out = [ROOT];
-				drop.dirs.forEach((path) => {
-					FS.mkdirTree(path);
-					// Add dirs to the string array if in the drop root.
-					const idx = path.indexOf('/', ROOT.length + 1);
-					if (idx === -1) {
-						out.push(path);
-					}
-				});
-				drop.files.forEach((elem) => {
+			new Promise(GodotInputDragDrop.process).then(function () {
+				const DROP = `/tmp/drop-${parseInt(Math.random() * (1 << 30), 10)}/`;
+				const drops = [];
+				const files = [];
+				FS.mkdir(DROP.slice(0, -1)); // Without trailing slash
+				GodotInputDragDrop.pending_files.forEach((elem) => {
 					const path = elem['path'];
-					GodotFS.copy_to_fs(path, elem['data']);
-					// Add file to the string array if in the drop root.
-					const idx = path.indexOf('/', ROOT.length + 1);
+					GodotFS.copy_to_fs(DROP + path, elem['data']);
+					let idx = path.indexOf('/');
 					if (idx === -1) {
-						out.push(path);
+						// Root file
+						drops.push(DROP + path);
+					} else {
+						// Subdir
+						const sub = path.substr(0, idx);
+						idx = sub.indexOf('/');
+						if (idx < 0 && drops.indexOf(DROP + sub) === -1) {
+							drops.push(DROP + sub);
+						}
 					}
+					files.push(DROP + path);
 				});
-				callback(out);
-			}).catch(function (err) {
-				GodotRuntime.error(err);
+				GodotInputDragDrop.promises = [];
+				GodotInputDragDrop.pending_files = [];
+				callback(drops);
+				if (GodotConfig.persistent_drops) {
+					// Delay removal at exit.
+					GodotOS.atexit(function (resolve, reject) {
+						GodotInputDragDrop.remove_drop(files, DROP);
+						resolve();
+					});
+				} else {
+					GodotInputDragDrop.remove_drop(files, DROP);
+				}
+			});
+		},
+
+		remove_drop: function (files, drop_path) {
+			const dirs = [drop_path.substr(0, drop_path.length - 1)];
+			// Remove temporary files
+			files.forEach(function (file) {
+				FS.unlink(file);
+				let dir = file.replace(drop_path, '');
+				let idx = dir.lastIndexOf('/');
+				while (idx > 0) {
+					dir = dir.substr(0, idx);
+					if (dirs.indexOf(drop_path + dir) === -1) {
+						dirs.push(drop_path + dir);
+					}
+					idx = dir.lastIndexOf('/');
+				}
+			});
+			// Remove dirs.
+			dirs.sort(function (a, b) {
+				const al = (a.match(/\//g) || []).length;
+				const bl = (b.match(/\//g) || []).length;
+				if (al > bl) {
+					return -1;
+				} else if (al < bl) {
+					return 1;
+				}
+				return 0;
+			}).forEach(function (dir) {
+				FS.rmdir(dir);
 			});
 		},
 
@@ -497,9 +544,9 @@ const GodotInput = {
 			const rel_pos_x = evt.movementX * rw;
 			const rel_pos_y = evt.movementY * rh;
 			const modifiers = GodotInput.getModifiers(evt);
-			func(pos[0], pos[1], rel_pos_x, rel_pos_y, modifiers, evt.pressure);
+			func(pos[0], pos[1], rel_pos_x, rel_pos_y, modifiers);
 		}
-		GodotEventListeners.add(window, 'pointermove', move_cb, false);
+		GodotEventListeners.add(window, 'mousemove', move_cb, false);
 	},
 
 	godot_js_input_mouse_wheel_cb__proxy: 'sync',
@@ -507,7 +554,7 @@ const GodotInput = {
 	godot_js_input_mouse_wheel_cb: function (callback) {
 		const func = GodotRuntime.get_func(callback);
 		function wheel_cb(evt) {
-			if (func(evt.deltaMode, evt.deltaX ?? 0, evt.deltaY ?? 0)) {
+			if (func(evt['deltaX'] || 0, evt['deltaY'] || 0)) {
 				evt.preventDefault();
 			}
 		}
@@ -551,6 +598,8 @@ const GodotInput = {
 				GodotConfig.canvas.focus();
 			}
 			const rect = canvas.getBoundingClientRect();
+			rect.x = 0;
+			rect.y = 0;
 			const touches = evt.changedTouches;
 			for (let i = 0; i < touches.length; i++) {
 				const touch = touches[i];

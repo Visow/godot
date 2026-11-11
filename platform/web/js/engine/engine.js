@@ -44,8 +44,14 @@ const Engine = (function () {
 	Engine.load = function (basePath, size) {
 		if (loadPromise == null) {
 			loadPath = basePath;
-			loadPromise = preloader.loadPromise(`${loadPath}.wasm`, size, true);
-			requestAnimationFrame(preloader.animateProgress);
+			const wxWasm = (typeof GameGlobal !== 'undefined' && GameGlobal.WXWebAssembly)
+				|| (typeof WXWebAssembly !== 'undefined' ? WXWebAssembly : null);
+			if (wxWasm) {
+				loadPromise = Promise.resolve(null);
+			} else {
+				loadPromise = preloader.loadPromise(`${loadPath}.wasm.br`, size, true);
+				requestAnimationFrame(preloader.animateProgress);
+			}
 		}
 		return loadPromise;
 	};
@@ -95,8 +101,8 @@ const Engine = (function () {
 					// Make sure to test that when refactoring.
 					return new Promise(function (resolve, reject) {
 						promise.then(function (response) {
-							const cloned = new Response(response.clone().body, { 'headers': [['content-type', 'application/wasm']] });
-							Godot(me.config.getModuleConfig(loadPath, cloned)).then(function (module) {
+							const wasm_input = response && response.data !== undefined ? response.data : response;
+							Godot(me.config.getModuleConfig(loadPath, wasm_input)).then(function (module) {
 								const paths = me.config.persistentPaths;
 								module['initFS'](paths).then(function (err) {
 									me.rtenv = module;
@@ -290,7 +296,9 @@ const Engine = (function () {
 		};
 
 		Engine.prototype = proto;
-		return new Engine(initConfig);
+		const instance = new Engine(initConfig);
+		instance.preloader = preloader;
+		return instance;
 	}
 
 	// Closure compiler exported static methods.
